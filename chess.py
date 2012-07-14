@@ -338,6 +338,9 @@ class Game(object):
         """Update the piece's position, removing any existing piece.
                 
         """
+        # Don't need to worry about accidentally moving pieces from other games
+        piece = self.get_piece_at(piece.pos)
+        
         # Make sure nothing weird is happening
         if not piece.color == self.color_to_move:
             raise RuntimeError("Not that piece's turn.")
@@ -445,7 +448,7 @@ class Game(object):
         would_check = []
         for move in moves:
             test_game = copy.deepcopy(self)
-            test_game.move_piece_to(test_game.get_piece_at(move[0].pos), move[1])
+            test_game.move_piece_to(piece, move[1])
             if test_game.in_check(color):
                 would_check.append(move)
             # # Move the piece, test for check, then move it back
@@ -569,7 +572,18 @@ class ComputerPlayer(Player):
         available_moves = self.game.get_valid_moves(self.color)
         taking_moves = [move for move in available_moves if
                         self.game.get_piece_at(move[1])]
-        if taking_moves:
+        
+        # Find checking moves
+        checking_moves = []
+        for move in available_moves:
+            test_game = copy.deepcopy(game)
+            test_game.move_piece_to(move[0], move[1])
+            if test_game.in_check(not self.color):
+                checking_moves.append(move)
+        
+        if checking_moves:
+            best_move = random.choice(checking_moves)
+        elif taking_moves:
             best_move = random.choice(taking_moves)
         else:
             best_move = random.choice(available_moves)
