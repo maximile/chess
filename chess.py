@@ -26,8 +26,11 @@ import random
 GRID_REF = re.compile(r"[A-H][1-8]")
 
 # Piece colours
-WHITE = "WHITE"
-BLACK = "BLACK"
+WHITE = True
+BLACK = False
+
+# Human-readable colour names
+COLOR_NAMES = {WHITE: "white", BLACK: "black"}
 
 # Square colours
 DARK = "DARK"
@@ -52,7 +55,6 @@ ANSI_FG = {WHITE: "37", BLACK: "31"}
 # ANSI_BG = {DARK: "43", LIGHT: "47"}
 # ANSI_FG = {WHITE: "31", BLACK: "30"}
 
-
 class Piece(object):
     def __init__(self, game, color, pos):
         if not color in (WHITE, BLACK):
@@ -61,7 +63,13 @@ class Piece(object):
         self.pos = pos
         self.name = PIECE_NAMES[self.__class__]
         self.game = game
-        
+    
+    def __str__(self):
+        color_string = COLOR_NAMES[self.color]
+        piece_string = PIECE_NAMES[self.__class__]
+        pos_string = self.game.get_grid_ref_for_pos(self.pos)
+        return "%s %s at %s" % (color_string.title(), piece_string, pos_string)
+    
     def get_moves_in_direction(self, direction):
         """Find all moves along a given direction.
         
@@ -171,6 +179,7 @@ class Pawn(Piece):
         # TODO: en passant
         
         moves = self.remove_invalid_moves(moves)
+        
         return moves
 
 class Knight(Piece):
@@ -283,6 +292,9 @@ PIECE_NAMES = {King: "king",
                Pawn: "pawn"}
 
 
+class EndGame(Exception):
+    pass
+
 class Game(object):
     def __init__(self):
         """Set up initial state.
@@ -321,6 +333,10 @@ class Game(object):
         """Update the piece's position, removing any existing piece.
         
         """
+        # Make sure nothing weird is happening
+        if not piece.color == self.color_to_move:
+            raise RuntimeError("Not that piece's turn.")
+        
         previous_piece = self.get_piece_at(pos)
         
         # Check for taking
@@ -336,10 +352,56 @@ class Game(object):
             # Remove the piece
             self._pieces.remove(previous_piece)
         
+        # Move the piece
         piece.pos = pos
         piece.game = self
-            
-    def get_coords_for_grid_ref(self, file_letter, rank_number):
+        
+        # Handle special cases. Promotion:
+        if piece.__class__ == Pawn:
+            # TODO: Handle promotion to other officers
+            if (piece.color == WHITE and piece.pos[1] == 7 or
+                piece.color == BLACK and piece.pos[1] == 1):
+                self._pieces.remove(piece)
+                self._pieces.append(Queen(self, piece.color, piece.pos))
+        # TODO: en passant, castling
+
+        # It's the other player's turn
+        self.color_to_move = not self.color_to_move
+        
+        
+        # See if that's the end of the game
+        if not self.get_valid_moves(self.color_to_move):
+            # In check? That's checkmate
+            if self.in_check():
+                raise EndGame("Checkmate! %s wins" %
+                              COLOR_NAMES[not self.color_to_move].title())
+            else:
+                raise EndGame("Stalemate!")
+    
+    def in_check(self, color=None):
+        """If the current player's King is under threat.
+        
+        """
+        if not color:
+            color = self.color_to_move
+        
+        # All the moves the opposing player could make
+        their_color = not color
+        
+        # See if any of the other player's moves could take the king
+        our_king = [piece for piece in self._pieces if
+                    piece.__class__ == King and piece.color == color][0]
+        their_moves = self.get_valid_moves(their_color, ignore_check=True)
+        for move in their_moves:
+            if self.get_piece_at(move[1]) == our_king:
+                # They have a move that could potentially take the King
+                # on the next turn
+                return True
+        
+        # The king isn't under attack
+        return False
+                
+    def get_coords_for_grid_ref(self, grid_ref):
         """Convert traditional coordinates to our coordinates.
 
         e.g. A1 -> (0, 0)
@@ -350,29 +412,59 @@ class Game(object):
                       "H": 7}
         y_for_rank = {"1": 0, "2": 1, "3": 2, "4": 3, "5": 4, "6": 5, "7": 6,
                       "8": 7}
+        file_letter = grid_ref[0]
+        rank_number = grid_ref[1]
         return (x_for_file[file_letter], y_for_rank[rank_number])
+
+    def get_grid_ref_for_pos(self, coords):
+        """Convert traditional coordinates to our coordinates.
+
+        e.g. A1 -> (0, 0)
+             H8 -> (7, 7)
+
+        """
+        files = ["A", "B", "C", "D", "E", "F", "G", "H"]
+        ranks = ["1", "2", "3", "4", "5", "6", "7", "8"]
+        return (files[coords[0]] + ranks[coords[1]])
     
     def get_pieces(self, color=None):
         """Pieces with the given color, or all pieces.
         
         """
-        if not color:
+        if color is None:
             return self._pieces
         return [piece for piece in self._pieces if piece.color == color]
     
-    def get_valid_moves(self, color):
+    def get_valid_moves(self, color, ignore_check=False):
         """All possible moves for the given color.
         
-        Returns a list of tuples, piece then move.
-        
-        Includes taking the King, so check should be handled separately.
+        Returns a list of tuples, piece then move. Includes taking the King,
+        so check should be handled separately. Pass ignore_check to allow moves
+        that would put the King at risk.
         
         """
+        # Get every possible move
         moves = []
         for piece in self.get_pieces(color):
             for pos in piece.get_valid_moves():
                 moves.append((piece, pos))
-        return moves
+                
+        # If we're not worried about putting ourself in check, we're done.
+        if ignore_check:
+            return moves
+        
+        # Filter out moves that would put the King in check
+        would_check = []
+        for move in moves:
+            # Move the piece, test for check, then move it back
+            piece, pos = move
+            old_pos = piece.pos
+            piece.pos = pos
+            if self.in_check(color):
+                would_check.append(move)
+            piece.pos = old_pos
+        
+        return [move for move in moves if not move in would_check]
 
 def draw_game(game, selected_piece=None):
     # Get a string for each rank
@@ -421,23 +513,26 @@ def draw_game(game, selected_piece=None):
 def main():
     game = Game()
     
-    while True:
-        time.sleep(0.1)
+    try:
+        while True:
+            # time.sleep(0.01)
+            draw_game(game)
+            
+            # Random computer move.
+            available_moves = game.get_valid_moves(WHITE)
+            best_move = random.choice(available_moves)
+            game.move_piece_to(best_move[0], best_move[1])
+            
+            # time.sleep(0.01)
+            draw_game(game)
+            
+            # Random computer move.
+            available_moves = game.get_valid_moves(BLACK)
+            best_move = random.choice(available_moves)
+            game.move_piece_to(best_move[0], best_move[1])
+    except EndGame:
         draw_game(game)
-        
-        # Random computer move.
-        available_moves = game.get_valid_moves(WHITE)
-        best_move = random.choice(available_moves)
-        game.move_piece_to(best_move[0], best_move[1])
-        
-        time.sleep(0.1)
-        draw_game(game)
-        
-        # Random computer move.
-        available_moves = game.get_valid_moves(BLACK)
-        best_move = random.choice(available_moves)
-        game.move_piece_to(best_move[0], best_move[1])
-    
+        raise
     
     # Main loop
     while True:
