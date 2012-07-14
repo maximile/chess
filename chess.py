@@ -1,7 +1,29 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+"""
+Chess! Squares are identified by tuples of ints, 0-7. Y axis is up from white's
+point of view:
 
+7 [ ][ ][ ][ ][ ][ ][ ][ ]
+6 [ ][ ][ ][ ][ ][ ][ ][ ]  Black's starting side
+5 [ ][ ][ ][ ][ ][ ][ ][ ]
+4 [ ][ ][ ][ ][ ][ ][ ][ ]
+3 [ ][ ][ ][ ][ ][ ][ ][ ]
+2 [ ][ ][ ][ ][*][ ][ ][ ]
+1 [ ][ ][ ][ ][ ][ ][ ][ ]  White's starting side
+0 [ ][ ][ ][ ][ ][ ][ ][ ]
+   0  1  2  3  4  5  6  7
+   
+The squared marked * would be identified by tuple (4, 2). There's no board
+class; just a list of pieces each one keeping track of its own position.
+
+"""
 import re
+import time
+import random
+
+# Regular expression for a valid grid reference (only used for input)
+GRID_REF = re.compile(r"[A-H][1-8]")
 
 # Piece colours
 WHITE = "WHITE"
@@ -10,6 +32,7 @@ BLACK = "BLACK"
 # Square colours
 DARK = "DARK"
 LIGHT = "LIGHT"
+HIGHLIGHTED = "HIGHLIGHTED"
 
 # Directions
 UP = (0, 1)
@@ -24,19 +47,20 @@ UP_LEFT = (-1, 1)
 # ANSI color codes
 ANSI_BEGIN = "\033[%sm"
 ANSI_END = "\033[0m"
-ANSI_BG = {DARK: "40", LIGHT: "44"}
+ANSI_BG = {DARK: "40", LIGHT: "44", HIGHLIGHTED: "42"}
 ANSI_FG = {WHITE: "37", BLACK: "31"}
 # ANSI_BG = {DARK: "43", LIGHT: "47"}
 # ANSI_FG = {WHITE: "31", BLACK: "30"}
 
 
 class Piece(object):
-    def __init__(self, color):
+    def __init__(self, game, color, pos):
         if not color in (WHITE, BLACK):
             raise ValueError("Invalid color")
         self.color = color
-        self.pos = None
+        self.pos = pos
         self.name = PIECE_NAMES[self.__class__]
+        self.game = game
         
     def get_moves_in_direction(self, direction):
         """Find all moves along a given direction.
@@ -61,7 +85,7 @@ class Piece(object):
                 break
             
             # Hit a piece? Action depends on which color
-            hit_piece = self.board.get_piece_at(test_move)
+            hit_piece = self.game.get_piece_at(test_move)
             if hit_piece:
                 if hit_piece.color == self.color:
                     # Same color. It's not a valid move and we can't go
@@ -88,26 +112,26 @@ class Piece(object):
         
         """
         valid_moves = []
-        for move in moves:
+        for pos in moves:
             # Make sure it's actually a move
-            if self.move == self.pos:
+            if pos == self.pos:
                 continue
             
             # Make sure it's on the board
-            if (self.move[0] < 0 or self.move[0] > 7 or
-                self.move[1] < 0 or self.move[1] > 7):
+            if (pos[0] < 0 or pos[0] > 7 or
+                pos[1] < 0 or pos[1] > 7):
                 # Off the board
                 continue
             
             # Make sure it's not taking one of its own pieces
-            taken_piece = self.board.get_piece_at(move)
+            taken_piece = self.game.get_piece_at(pos)
             if taken_piece and taken_piece.color == self.color:
                 # Taking its own piece
                 continue
             
             # TODO: If in check, remove moves that don't rescue the King
             
-            valid_moves.append(move)
+            valid_moves.append(pos)
         
         return valid_moves    
 
@@ -129,8 +153,9 @@ class Pawn(Piece):
         else:
             raise RuntimeError("Never reached.")
         
-        # Always able to move one square forward
-        moves.append(forward_one)
+        # Can move one square forward if the square is vacant
+        if not self.game.get_piece_at(forward_one):
+            moves.append(forward_one)
         
         # Can move two squares forward from the starting position
         if ((self.color == WHITE and self.pos[1] == 1) or
@@ -139,12 +164,13 @@ class Pawn(Piece):
         
         # Can take diagonally forward
         for taking_move in take_left, take_right:
-            taken_piece = self.board.get_piece_at(taking_move)
+            taken_piece = self.game.get_piece_at(taking_move)
             if taken_piece and not taken_piece.color == self.color:
                 moves.append(taking_move)
         
         # TODO: en passant
         
+        moves = self.remove_invalid_moves(moves)
         return moves
 
 class Knight(Piece):
@@ -163,6 +189,7 @@ class Knight(Piece):
 
         # Remove obviously invalid moves
         moves = self.remove_invalid_moves(moves)
+        return moves
         
 
 class King(Piece):
@@ -174,13 +201,13 @@ class King(Piece):
         for offset in offsets:
             moves.append((self.pos[0] + offset[0], self.pos[1] + offset[1]))
         
-        # Remove obviously invalid moves
-        moves = self.remove_invalid_moves(moves)
         
         # TODO: Remove moves that would put the king in check
         
         # TODO: Castling
         
+        # Remove obviously invalid moves
+        moves = self.remove_invalid_moves(moves)
         return moves
 
 
@@ -197,6 +224,7 @@ class Queen(Piece):
         for direction in directions:
             moves.extend(self.get_moves_in_direction(direction))
         
+        moves = self.remove_invalid_moves(moves)    
         return moves
 
 
@@ -212,6 +240,7 @@ class Bishop(Piece):
         for direction in directions:
             moves.extend(self.get_moves_in_direction(direction))
 
+        moves = self.remove_invalid_moves(moves)
         return moves
 
 
@@ -227,6 +256,7 @@ class Rook(Piece):
         for direction in directions:
             moves.extend(self.get_moves_in_direction(direction))
 
+        moves = self.remove_invalid_moves(moves)
         return moves
 
 
@@ -237,6 +267,12 @@ PIECE_CHARACTERS = {King: "♚",
                     Bishop: "♝",
                     Knight: "♞",
                     Pawn: "♟"}
+SELECTED_PIECE_CHARACTERS = {King: "♔",
+                             Queen: "♕",
+                             Rook: "♖",
+                             Bishop: "♗",
+                             Knight: "♘",
+                             Pawn: "♙"}
 
 # Human readable piece names
 PIECE_NAMES = {King: "king",
@@ -247,161 +283,206 @@ PIECE_NAMES = {King: "king",
                Pawn: "pawn"}
 
 
-class Board(object):
-    """Array of squares, each of which can hold one piece.
-    
-    Y axis is up from white's point of view:
-    
-    7 [ ][ ][ ][ ][ ][ ][ ][ ]
-    6 [ ][ ][ ][ ][ ][ ][ ][ ]  Black's starting side
-    5 [ ][ ][ ][ ][ ][ ][ ][ ]
-    4 [ ][ ][ ][ ][ ][ ][ ][ ]
-    3 [ ][ ][ ][ ][ ][ ][ ][ ]
-    2 [ ][ ][ ][ ][*][ ][ ][ ]
-    1 [ ][ ][ ][ ][ ][ ][ ][ ]  White's starting side
-    0 [ ][ ][ ][ ][ ][ ][ ][ ]
-       0  1  2  3  4  5  6  7
-       
-    The squared marked * would be addressed by tuple (4, 2)
-    
-    """
-    def __init__(self, default_starting_position=True):
-        # Pieces stored in a list of lists. None if no piece.
-        self._pieces = []
-        for rank in range(8):
-            squares = []
-            for file in range(8):
-                squares.append(None)
-            self._pieces.append(squares)
+class Game(object):
+    def __init__(self):
+        """Set up initial state.
         
-        if default_starting_position:
-            # Setup pawns
-            for x in range(8):
-                self.move_piece_to(Pawn(WHITE), (x, 1))
-                self.move_piece_to(Pawn(BLACK), (x, 6))
-            
-            # Other pieces
-            officer_ranks = {WHITE: 0, BLACK: 7}
-            for color, rank in officer_ranks.items():
-                self.move_piece_to(Rook(color), (0, rank))
-                self.move_piece_to(Knight(color), (1, rank))
-                self.move_piece_to(Bishop(color), (2, rank))
-                self.move_piece_to(Queen(color), (3, rank))
-                self.move_piece_to(King(color), (4, rank))
-                self.move_piece_to(Bishop(color), (5, rank))
-                self.move_piece_to(Knight(color), (6, rank))
-                self.move_piece_to(Rook(color), (7, rank))
+        """
+        # List of all pieces in the game
+        self._pieces = []
+        self.color_to_move = WHITE
+        
+        # Setup initial position. First, setup pawns:
+        for x in range(8):
+            self._pieces.append(Pawn(self, WHITE, (x,1)))
+            self._pieces.append(Pawn(self, BLACK, (x,6)))
+        
+        # Other pieces
+        officer_ranks = {WHITE: 0, BLACK: 7}
+        for color, rank in officer_ranks.items():
+            self._pieces.append(Rook(self, color, (0, rank)))
+            self._pieces.append(Knight(self, color, (1, rank)))
+            self._pieces.append(Bishop(self, color, (2, rank)))
+            self._pieces.append(Queen(self, color, (3, rank)))
+            self._pieces.append(King(self, color, (4, rank)))
+            self._pieces.append(Bishop(self, color, (5, rank)))
+            self._pieces.append(Knight(self, color, (6, rank)))
+            self._pieces.append(Rook(self, color, (7, rank)))
+    
+    def get_piece_at(self, pos):
+        """The piece at the given position.
+        
+        """
+        for piece in self._pieces:
+            if piece.pos == pos:
+                return piece
     
     def move_piece_to(self, piece, pos):
-        if not piece.pos is None:
-            self._pieces[piece.pos[0]][piece.pos[1]] = None
-        self._pieces[pos[0]][pos[1]] = piece
-        piece.pos = pos
-        piece.board = self
-
-    def get_piece_at(self, pos):
-        return self._pieces[pos[0]][pos[1]]
-    
-    def get_string_rep(self, color=True, selected_piece=None):
-        """String representation of the board and pieces.
+        """Update the piece's position, removing any existing piece.
         
         """
-        # Get a string for each rank
-        rank_strings = []
+        previous_piece = self.get_piece_at(pos)
         
-        # Ranks, top to bottom:
-        for y in reversed(range(8)):
-            rank_string = " %i " % (y + 1)
-            for x in range(8):
-                piece = self.get_piece_at((x, y))
-                if piece:
-                    piece_char = PIECE_CHARACTERS[piece.__class__]
-                else:
-                    piece_char = " "
-                if color:
-                    if x % 2 == y % 2:
-                        square_color = DARK
-                    else:
-                        square_color = LIGHT
-                    piece_color = WHITE
-                    if piece and piece.color == BLACK:
-                        piece_color = BLACK
-                    begin_code = ANSI_BEGIN % "%s;%s" % (ANSI_BG[square_color],
-                                                         ANSI_FG[piece_color])
-                    rank_string += "%s%s %s" % (begin_code, piece_char, ANSI_END)
-                else:
-                    rank_string += "[%s " % piece_char
-            rank_strings.append(rank_string)
-        file_labels = "   A B C D E F G H"
-        return "\n".join(rank_strings) + "\n" + file_labels
+        # Check for taking
+        if previous_piece:
+            # Make sure it's a different colour (should be caught elsewhere)
+            if previous_piece.color == piece.color:
+                raise RuntimeError("%s tried to take own %s." %
+                                   (piece.name.title(), previous_piece.name))
+            # Make sure it's not a king
+            if previous_piece.__class__ == King:
+                raise RuntimeError("Took a king!")
+            
+            # Remove the piece
+            self._pieces.remove(previous_piece)
         
+        piece.pos = pos
+        piece.game = self
+            
     def get_coords_for_grid_ref(self, file_letter, rank_number):
         """Convert traditional coordinates to our coordinates.
-        
+
         e.g. A1 -> (0, 0)
              H8 -> (7, 7)
-        
+
         """
-        x_for_file = {"A": 0,
-                      "B": 1,
-                      "C": 2,
-                      "D": 3,
-                      "E": 4,
-                      "F": 5,
-                      "G": 6,
+        x_for_file = {"A": 0,"B": 1, "C": 2, "D": 3, "E": 4, "F": 5, "G": 6,
                       "H": 7}
-        y_for_rank = {"1": 0,
-                      "2": 1,
-                      "3": 2,
-                      "4": 3,
-                      "5": 4,
-                      "6": 5,
-                      "7": 6,
+        y_for_rank = {"1": 0, "2": 1, "3": 2, "4": 3, "5": 4, "6": 5, "7": 6,
                       "8": 7}
         return (x_for_file[file_letter], y_for_rank[rank_number])
     
-    def __str__(self):
-        return self.get_string_rep(color=False)
+    def get_pieces(self, color=None):
+        """Pieces with the given color, or all pieces.
+        
+        """
+        if not color:
+            return self._pieces
+        return [piece for piece in self._pieces if piece.color == color]
+    
+    def get_valid_moves(self, color):
+        """All possible moves for the given color.
+        
+        Returns a list of tuples, piece then move.
+        
+        Includes taking the King, so check should be handled separately.
+        
+        """
+        moves = []
+        for piece in self.get_pieces(color):
+            for pos in piece.get_valid_moves():
+                moves.append((piece, pos))
+        return moves
+
+def draw_game(game, selected_piece=None):
+    # Get a string for each rank
+    rank_strings = []
+    
+    # Get possible moves for selected piece
+    if selected_piece:
+        valid_moves = selected_piece.get_valid_moves()
+    else:
+        valid_moves = []
+    
+    # Ranks, top to bottom:
+    for y in reversed(range(8)):
+        rank_string = " %i " % (y + 1)
+        for x in range(8):
+            # Get foreground text (must make up two characters)
+            piece = game.get_piece_at((x, y))
+            if piece:
+                if piece == selected_piece:
+                    piece_char = SELECTED_PIECE_CHARACTERS[piece.__class__]
+                else:
+                    piece_char = PIECE_CHARACTERS[piece.__class__]
+                foreground_text = piece_char + " "
+            else:
+                foreground_text = "  "
+            
+            # Get background colour
+            if (x, y) in valid_moves:
+                square_color = HIGHLIGHTED
+            elif x % 2 == y % 2:
+                square_color = DARK
+            else:
+                square_color = LIGHT
+            piece_color = WHITE
+            if piece and piece.color == BLACK:
+                piece_color = BLACK
+            begin_code = ANSI_BEGIN % "%s;%s" % (ANSI_BG[square_color],
+                                                 ANSI_FG[piece_color])
+            rank_string += "%s%s%s" % (begin_code, foreground_text, ANSI_END)
+        rank_strings.append(rank_string)
+    file_labels = "   A B C D E F G H"
+    
+    print "\n".join(rank_strings) + "\n" + file_labels
+
 
 def main():
-    board = Board()
+    game = Game()
+    
+    while True:
+        time.sleep(0.1)
+        draw_game(game)
+        
+        # Random computer move.
+        available_moves = game.get_valid_moves(WHITE)
+        best_move = random.choice(available_moves)
+        game.move_piece_to(best_move[0], best_move[1])
+        
+        time.sleep(0.1)
+        draw_game(game)
+        
+        # Random computer move.
+        available_moves = game.get_valid_moves(BLACK)
+        best_move = random.choice(available_moves)
+        game.move_piece_to(best_move[0], best_move[1])
+    
     
     # Main loop
     while True:
         # Draw the board
-        print board.get_string_rep()
+        draw_game(game)
         
         # Select a piece
         piece = None
-        selection_string = raw_input("Move piece at: ").strip().upper()
-        if not re.match(r"[A-H][1-8]", selection_string):
+        input_string = raw_input("Move piece at: ").strip().upper()
+        if not GRID_REF.match(input_string):
             print "That's not a square (e.g. A1)"
-            break
-        file_letter = selection_string[0]
-        rank_number = selection_string[1]
-        coords = board.get_coords_for_grid_ref(file_letter, rank_number)
-        piece = board.get_piece_at(coords)
+            continue
+        file_letter = input_string[0]
+        rank_number = input_string[1]
+        coords = game.get_coords_for_grid_ref(file_letter, rank_number)
+        piece = game.get_piece_at(coords)
         if not piece:
-            print "No piece at %s" % selection_string
-            break
+            print "No piece at %s" % input_string
+            continue
         if not piece.color == WHITE:
             print "That's not your %s!" % piece.name
-            break
+            continue
+        if not piece.get_valid_moves():
+            print "That %s has nowhere to go!" % piece.name
+            continue
         
         # Move the piece
-        print board.get_string_rep()
-        move_string = raw_input("Move the %s to: " % piece.name).strip().upper()
-        if not re.match(r"[A-H][1-8]", selection_string):
-            print "That's not a square (e.g. A1)"
-            break
-        file_letter = move_string[0]
-        rank_number = move_string[1]
-        coords = board.get_coords_for_grid_ref(file_letter, rank_number)
+        draw_game(game, selected_piece=piece)
+        input_string = raw_input("Move the %s to: " % piece.name).strip().upper()
+        if not GRID_REF.match(input_string):
+            print "That's not a square!"
+            continue
+        file_letter = input_string[0]
+        rank_number = input_string[1]
+        coords = game.get_coords_for_grid_ref(file_letter, rank_number)
         if not coords in piece.get_valid_moves():
-            print "That %s can't move to %s" % (piece.name, move_string)
-            break
+            print "That %s can't move to %s" % (piece.name, input_string)
+            continue
         
-        board.move_piece_to(piece, coords)
+        game.move_piece_to(piece, coords)
+        
+        # Random computer move.
+        available_moves = game.get_valid_moves(BLACK)
+        best_move = random.choice(available_moves)
+        game.move_piece_to(best_move[0], best_move[1])
 
 if __name__ == "__main__":
     main()
