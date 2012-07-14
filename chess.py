@@ -302,7 +302,11 @@ class Game(object):
         """
         # List of all pieces in the game
         self._pieces = []
+        
+        # General state
         self.color_to_move = WHITE
+        # Number of moves without a pawn move or a take
+        self.idle_move_count = 0
         
         # Setup initial position. First, setup pawns:
         for x in range(8):
@@ -364,10 +368,15 @@ class Game(object):
                 self._pieces.remove(piece)
                 self._pieces.append(Queen(self, piece.color, piece.pos))
         # TODO: en passant, castling
-
+                
         # It's the other player's turn
         self.color_to_move = not self.color_to_move
         
+        # Alter idle move count - reset if it's a take or a pawn move
+        if self.piece.__class__ == Pawn or previous_piece:
+            self.idle_move_count = 0
+        else:
+            self.idle_move_count += 1
         
         # See if that's the end of the game
         if not self.get_valid_moves(self.color_to_move):
@@ -377,6 +386,8 @@ class Game(object):
                               COLOR_NAMES[not self.color_to_move].title())
             else:
                 raise EndGame("Stalemate!")
+        if self.idle_move_count >= 50:
+            raise EndGame("Draw (fifty idle moves)")
     
     def in_check(self, color=None):
         """If the current player's King is under threat.
