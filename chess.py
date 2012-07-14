@@ -351,7 +351,7 @@ class Game(object):
                                    (piece.name.title(), previous_piece.name))
             # Make sure it's not a king
             if previous_piece.__class__ == King:
-                raise RuntimeError("Took a king!")
+                raise RuntimeError("%s took %s!" % (piece, previous_piece))
             
             # Remove the piece
             self._pieces.remove(previous_piece)
@@ -364,16 +364,16 @@ class Game(object):
         if piece.__class__ == Pawn:
             # TODO: Handle promotion to other officers
             if (piece.color == WHITE and piece.pos[1] == 7 or
-                piece.color == BLACK and piece.pos[1] == 1):
+                piece.color == BLACK and piece.pos[1] == 0):
                 self._pieces.remove(piece)
                 self._pieces.append(Queen(self, piece.color, piece.pos))
         # TODO: en passant, castling
-                
+        
         # It's the other player's turn
         self.color_to_move = not self.color_to_move
         
         # Alter idle move count - reset if it's a take or a pawn move
-        if self.piece.__class__ == Pawn or previous_piece:
+        if piece.__class__ == Pawn or previous_piece:
             self.idle_move_count = 0
         else:
             self.idle_move_count += 1
@@ -470,10 +470,16 @@ class Game(object):
             # Move the piece, test for check, then move it back
             piece, pos = move
             old_pos = piece.pos
+            old_piece = self.get_piece_at(pos)
+            if old_piece:
+                self._pieces.remove(old_piece)
             piece.pos = pos
             if self.in_check(color):
                 would_check.append(move)
+            # Put them back
             piece.pos = old_pos
+            if old_piece:
+                self._pieces.append(old_piece)
         
         return [move for move in moves if not move in would_check]
 
@@ -524,71 +530,100 @@ def draw_game(game, selected_piece=None):
 def main():
     game = Game()
     
+    players = {BLACK: ComputerPlayer(game, BLACK),
+               WHITE: ComputerPlayer(game, WHITE)}
+    
     try:
         while True:
             # time.sleep(0.01)
             draw_game(game)
             
-            # Random computer move.
-            available_moves = game.get_valid_moves(WHITE)
-            best_move = random.choice(available_moves)
-            game.move_piece_to(best_move[0], best_move[1])
+            player_to_move = players[game.color_to_move]
+            move = player_to_move.get_move()
+            game.move_piece_to(move[0], move[1])
             
-            # time.sleep(0.01)
-            draw_game(game)
-            
-            # Random computer move.
-            available_moves = game.get_valid_moves(BLACK)
-            best_move = random.choice(available_moves)
-            game.move_piece_to(best_move[0], best_move[1])
+            # # Random computer move.
+            # available_moves = game.get_valid_moves(WHITE)
+            # best_move = random.choice(available_moves)
+            # game.move_piece_to(best_move[0], best_move[1])
+            # 
+            # # time.sleep(0.01)
+            # draw_game(game)
+            # 
+            # # Random computer move.
+            # available_moves = game.get_valid_moves(BLACK)
+            # best_move = random.choice(available_moves)
+            # game.move_piece_to(best_move[0], best_move[1])
     except EndGame:
         draw_game(game)
         raise
     
-    # Main loop
-    while True:
-        # Draw the board
-        draw_game(game)
+    # # Main loop
+    # while True:
+    #     # Draw the board
+    #     draw_game(game)
+    #     
+    #     # Select a piece
+    #     piece = None
+    #     input_string = raw_input("Move piece at: ").strip().upper()
+    #     if not GRID_REF.match(input_string):
+    #         print "That's not a square (e.g. A1)"
+    #         continue
+    #     file_letter = input_string[0]
+    #     rank_number = input_string[1]
+    #     coords = game.get_coords_for_grid_ref(file_letter, rank_number)
+    #     piece = game.get_piece_at(coords)
+    #     if not piece:
+    #         print "No piece at %s" % input_string
+    #         continue
+    #     if not piece.color == WHITE:
+    #         print "That's not your %s!" % piece.name
+    #         continue
+    #     if not piece.get_valid_moves():
+    #         print "That %s has nowhere to go!" % piece.name
+    #         continue
+    #     
+    #     # Move the piece
+    #     draw_game(game, selected_piece=piece)
+    #     input_string = raw_input("Move the %s to: " % piece.name).strip().upper()
+    #     if not GRID_REF.match(input_string):
+    #         print "That's not a square!"
+    #         continue
+    #     file_letter = input_string[0]
+    #     rank_number = input_string[1]
+    #     coords = game.get_coords_for_grid_ref(file_letter, rank_number)
+    #     if not coords in piece.get_valid_moves():
+    #         print "That %s can't move to %s" % (piece.name, input_string)
+    #         continue
+    #     
+    #     game.move_piece_to(piece, coords)
+    #     
+    #     # Random computer move.
+    #     available_moves = game.get_valid_moves(BLACK)
+    #     taking_moves = [move for move in available_moves if
+    #                     game.get_piece_at(move[1])]
+    #     best_move = random.choice(taking_moves)
+    #     game.move_piece_to(best_move[0], best_move[1])
+
+class ComputerPlayer(object):
+    def __init__(self, game, color):
+        self.game = game
+        self.color = color
+    
+    def get_move(self):
+        if not self.game.color_to_move == self.color:
+            raise RuntimeError("Not my turn!")
         
-        # Select a piece
-        piece = None
-        input_string = raw_input("Move piece at: ").strip().upper()
-        if not GRID_REF.match(input_string):
-            print "That's not a square (e.g. A1)"
-            continue
-        file_letter = input_string[0]
-        rank_number = input_string[1]
-        coords = game.get_coords_for_grid_ref(file_letter, rank_number)
-        piece = game.get_piece_at(coords)
-        if not piece:
-            print "No piece at %s" % input_string
-            continue
-        if not piece.color == WHITE:
-            print "That's not your %s!" % piece.name
-            continue
-        if not piece.get_valid_moves():
-            print "That %s has nowhere to go!" % piece.name
-            continue
+        available_moves = self.game.get_valid_moves(self.color)
+        taking_moves = [move for move in available_moves if
+                        self.game.get_piece_at(move[1])]
+        if taking_moves:
+            best_move = random.choice(taking_moves)
+        else:
+            best_move = random.choice(available_moves)
         
-        # Move the piece
-        draw_game(game, selected_piece=piece)
-        input_string = raw_input("Move the %s to: " % piece.name).strip().upper()
-        if not GRID_REF.match(input_string):
-            print "That's not a square!"
-            continue
-        file_letter = input_string[0]
-        rank_number = input_string[1]
-        coords = game.get_coords_for_grid_ref(file_letter, rank_number)
-        if not coords in piece.get_valid_moves():
-            print "That %s can't move to %s" % (piece.name, input_string)
-            continue
+        return best_move
         
-        game.move_piece_to(piece, coords)
-        
-        # Random computer move.
-        available_moves = game.get_valid_moves(BLACK)
-        best_move = random.choice(available_moves)
-        game.move_piece_to(best_move[0], best_move[1])
 
 if __name__ == "__main__":
     main()
