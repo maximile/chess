@@ -64,6 +64,7 @@ class Piece(object):
         self.color = color
         self.pos = pos
         self.name = PIECE_NAMES[self.__class__]
+        self.value= PIECE_VALUES[self.__class__]
         self.has_moved = False
     
     def __str__(self):
@@ -345,6 +346,14 @@ PIECE_NAMES = {King: "king",
                Knight: "knight",
                Pawn: "pawn"}
 
+# Values for AI
+PIECE_VALUES = {King: 9999,
+                Queen: 9,
+                Rook: 5,
+                Bishop: 3,
+                Knight: 3,
+                Pawn: 1}
+
 
 class EndGame(Exception):
     pass
@@ -397,11 +406,7 @@ class Game(object):
         """
         # Don't need to worry about accidentally moving pieces from other games
         piece = self.get_piece_at(piece.pos)
-        
-        # Make sure nothing weird is happening
-        if not piece.color == self.color_to_move:
-            raise RuntimeError("Not that piece's turn.")
-        
+                
         previous_piece = self.get_piece_at(pos)
         
         # Check for taking
@@ -488,6 +493,18 @@ class Game(object):
         if self.idle_move_count >= 50:
             raise EndGame("Draw (fifty idle moves)")
     
+    def is_piece_at_risk(self, piece):
+        """If the piece can be taken.
+        
+        """
+        their_moves = self.get_valid_moves(not piece.color, testing_check=True)
+        for move in their_moves:
+            if self.get_piece_at(move[1]) == piece:
+                # They have a move that could potentially take the piece
+                # on the next turn
+                return True
+        return False
+                
     def in_check(self, color=None):
         """If the current player's King is under threat.
         
@@ -495,18 +512,11 @@ class Game(object):
         if color is None:
             color = self.color_to_move
         
-        # All the moves the opposing player could make
-        their_color = not color
-        
         # See if any of the other player's moves could take the king
         our_king = [piece for piece in self._pieces if
                     piece.__class__ == King and piece.color == color][0]
-        their_moves = self.get_valid_moves(their_color, testing_check=True)
-        for move in their_moves:
-            if self.get_piece_at(move[1]) == our_king:
-                # They have a move that could potentially take the King
-                # on the next turn
-                return True
+        if self.is_piece_at_risk(our_king):
+            return True
         
         # The king isn't under attack
         return False
@@ -691,26 +701,69 @@ class ComputerPlayer(Player):
         
         available_moves = self.game.get_valid_moves(self.color)
         
-        # Find taking moves
-        taking_moves = [move for move in available_moves if
-                        self.game.get_piece_at(move[1])]
-        
         # Find checking moves
         checking_moves = []
+        riskless_checking_moves = []
         for move in available_moves:
             test_game = copy.deepcopy(self.game)
             test_game.move_piece_to(move[0], move[1])
             if test_game.in_check(not self.color):
+                # Check for potential mates
+                if not test_game.get_valid_moves(not self.color):
+                    return move
                 checking_moves.append(move)
+                if not test_game.is_piece_at_risk(move[0]):
+                    riskless_checking_moves.append(move)
         
+        # Find taking moves
+        taking_moves = [move for move in available_moves if
+                        self.game.get_piece_at(move[1])]
+        
+        # Find riskless taking moves (free material)
+        riskless_taking_moves = []
+        for move in taking_moves:
+            test_game = copy.deepcopy(self.game)
+            test_game.move_piece_to(move[0], move[1])
+            if not test_game.is_piece_at_risk(test_game.get_piece_at(move[1])):
+                riskless_taking_moves.append(move)
+        if riskless_taking_moves:
+            return random.choice(riskless_taking_moves)
+        
+        # A check is pretty good if it doesn't cost anything
+        if riskless_checking_moves:
+            return random.choice(riskless_checking_moves)
+        
+        # Find the best value taking move
+        valued_taking_moves = {}
+        for move in taking_moves:
+            our_piece = move[0]
+            their_piece = self.game.get_piece_at(move[1])
+            move_value = their_piece.value - our_piece.value
+            valued_taking_moves[move] = our_piece.value
+        highest_value = -999999
+        best_taking_move = None
+        for move, value in valued_taking_moves.items():
+            if value > highest_value:
+                best_taking_move = move
+                highest_value = value
+        
+        # Find pawn moves
+        pawn_moves = [move for move in available_moves if
+                      move[0].__class__ == Pawn]
+        
+        # Good options
+        good_options = []
+        if pawn_moves:
+            good_options.append(random.choice(pawn_moves))
         if checking_moves:
-            best_move = random.choice(checking_moves)
-        elif taking_moves:
-            best_move = random.choice(taking_moves)
-        else:
-            best_move = random.choice(available_moves)
+            good_options.append(checking_moves)
+        if best_taking_move:
+            good_options.append(best_taking_move)
+        if good_options:
+            return random.choice(good_options)
         
-        return best_move
+        # Make any move
+        return random.choice(available_moves)
 
 class HumanPlayer(Player):
     def get_move(self):
