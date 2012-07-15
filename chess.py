@@ -772,7 +772,6 @@ class HumanPlayer(Player):
         """
         # Loop until we have a valid move
         while True:
-            draw_game(self.game)
             # Print status
             if self.game.in_check(self.color):
                 check_string = " (You're in check!)"
@@ -855,13 +854,17 @@ class HumanPlayer(Player):
             draw_game(self.game, selected_piece=piece)
             input_string = raw_input("Move the %s to: " % piece.name).strip().upper()
             if not GRID_REF.match(input_string):
+                draw_game(self.game)
                 print "That's not a square!"
                 continue
             coords = get_coords_for_grid_ref(input_string)
             valid_squares = [move[1] for move in valid_moves]
             if coords == piece.pos:
+                draw_game(self.game)
                 print "That %s is already on %s!" % (piece.name, input_string)
+                continue
             if not coords in valid_squares:
+                draw_game(self.game)
                 print "That %s can't move to %s" % (piece.name, input_string)
                 continue
             return (piece, coords)
