@@ -691,6 +691,7 @@ class HumanPlayer(Player):
         """Get command line input to move the piece.
         
         """
+        # Loop until we have a valid move
         while True:
             draw_game(self.game)
             # Print status
@@ -700,21 +701,69 @@ class HumanPlayer(Player):
                 check_string = ""
             print "%s to play.%s" % (COLOR_NAMES[self.color].title(),
                                      check_string)
-
-            # Select a piece
-            piece = None
-            input_string = raw_input("Move piece at: ").strip().upper()
-            if not GRID_REF.match(input_string):
-                print "That's not a square (e.g. A1)"
+            
+            # Get user input
+            move_string = raw_input("Your move: ").strip().upper()
+            
+            # Is it an explicit move (from -> to)?
+            explicit_match = re.match(r"([A-H][1-8]).*([A-H][1-8])",
+                                      move_string)
+            if explicit_match:
+                from_ref = match.group(1)
+                to_ref = match.group(2)
+                from_pos = get_coords_for_grid_ref(from_ref)
+                to_pos = get_coords_for_grid_ref(to_ref)
+                piece = self.game.get_piece_at(from_pos)
+                
+                # Validate the move
+                if not piece:
+                    print "No piece at %s" % from_ref
+                    continue
+                if not piece.color == self.color:
+                    print "That's not your %s!" % piece.name
+                    continue
+                valid_moves = self.game.get_valid_moves_for_piece(piece)
+                valid_squares = [move[1] for move in valid_moves]
+                if not to_pos in valid_squares:
+                    print "That %s can't move to %s!" % (piece.name, to_ref)
+                    continue
+                return (piece, to_pos)
+            
+            # Specified a single square
+            if not re.match(r"[A-H][1-8]", move_string):
+                print "That's not a valid move. Examples: 'A8', 'D2D4', etc."
                 continue
-            coords = get_coords_for_grid_ref(input_string)
-            piece = self.game.get_piece_at(coords)
-            if not piece:
-                print "No piece at %s" % input_string
-                continue
-            if not piece.color == self.color:
-                print "That's not your %s!" % piece.name
-                continue
+            pos = get_coords_for_grid_ref(move_string)
+            piece_on_target = game.get_piece_at(pos)
+            
+            # If it's not one of ours, see if any of our pieces can move there
+            if not piece_on_target or not piece_on_target.color == self.color:
+                valid_moves = game.get_valid_moves(self.color)
+                if not valid_moves:
+                    print "No piece can move there."
+                    continue
+                elif len(valid_moves) == 2:
+                    piece_one = valid_moves[0][0]
+                    piece_two = valid_moves[1][0]
+                    if piece_one.__class__ == piece_two.__class__:
+                        name = PIECE_NAMES[piece_one.__class__]
+                        print "Two %ss can move there." % name
+                    else:
+                        name_one = PIECE_NAMES[piece_one.__class__]
+                        name_two = PIECE_NAMES[piece_two.__class__]
+                        print ("The %s and the %s can both move there." %
+                               (name_one, name_two)
+                    continue
+                elif len(valid_moves) > 1:
+                    print "Lots of pieces can move there."
+                    continue
+                elif len(valid_moves) == 1:
+                    return valid_moves[0]
+                else:
+                    raise RuntimeError("Never reached.")
+            
+            # It's one of ours; show where it can move and ask again
+            piece = piece_on_target
             valid_moves = self.game.get_valid_moves_for_piece(piece)
             if not valid_moves:
                 print "That %s has nowhere to go!" % piece.name
