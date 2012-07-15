@@ -182,7 +182,9 @@ class Pawn(Piece):
             if taken_piece and not taken_piece.color == self.color:
                 moves.append(taking_move)
         
-        # TODO: en passant
+        # En passant
+        if game.en_passant_pos in [take_left, take_right]:
+            moves.append(game.en_passant_pos)
         
         moves = self.remove_invalid_moves(game, moves)
         
@@ -365,7 +367,9 @@ class Game(object):
             self._pieces.append(Pawn(WHITE, (x,1)))
             self._pieces.append(Pawn(BLACK, (x,6)))
         
+        # Various state
         self.last_moved_piece = None
+        self.en_passant_pos = None
         
         # Other pieces
         officer_ranks = {WHITE: 0, BLACK: 7}
@@ -416,16 +420,27 @@ class Game(object):
         # Move the piece
         old_pos = piece.pos
         piece.pos = pos
-        piece.has_moved = True
-        self.last_moved_piece = piece
-        
-        # Handle special cases. Promotion:
+
+        # Handle special cases. Pawns:
         if piece.__class__ == Pawn:
-            # TODO: Handle promotion to other officers
+            # Promotion. TODO: Handle promotion to other officers
             if (piece.color == WHITE and piece.pos[1] == 7 or
                 piece.color == BLACK and piece.pos[1] == 0):
                 self._pieces.remove(piece)
                 self._pieces.append(Queen(piece.color, piece.pos))
+
+            # En passant
+            if piece.pos == self.en_passant_pos:
+                if piece.pos[1] == 2:
+                    taken_pawn = self.get_piece_at((piece.pos[0], 2))
+                elif piece.pos[1] == 5:
+                    taken_pawn = self.get_piece_at((piece.pos[0], 4))
+                else:
+                    raise RuntimeError("Messed up en passant.")
+                if not taken_pawn:
+                    raise RuntimeError("Messed up en passant again.")
+                print "Removing %s" % taken_pawn
+                self._pieces.remove(taken_pawn)
         
         # Castling
         if piece.__class__ == King:
@@ -438,7 +453,22 @@ class Game(object):
                 king_rook.pos = (5, pos[1])
                 king_rook.has_moved = True
         
-        # TODO: en passant
+        # Update en passant status
+        if (piece.__class__ == Pawn and piece.pos[1] in [3,4] and
+            not piece.has_moved):
+            if piece.pos[1] == 3:
+                self.en_passant_pos = ((piece.pos[0], 2))
+            else:
+                self.en_passant_pos = ((piece.pos[0], 5))
+        else:
+            self.en_passant_pos = None
+        
+        # Update game state for castling etc.
+        piece.has_moved = True
+        self.last_moved_piece = piece
+        
+        
+        
         
         # Alter idle move count - reset if it's a take or a pawn move
         if piece.__class__ == Pawn or previous_piece:
@@ -699,6 +729,7 @@ class HumanPlayer(Player):
                 check_string = " (You're in check!)"
             else:
                 check_string = ""
+            print self.game.en_passant_pos
             print "%s to play.%s" % (COLOR_NAMES[self.color].title(),
                                      check_string)
             
@@ -709,8 +740,8 @@ class HumanPlayer(Player):
             explicit_match = re.match(r"([A-H][1-8]).*([A-H][1-8])",
                                       move_string)
             if explicit_match:
-                from_ref = match.group(1)
-                to_ref = match.group(2)
+                from_ref = explicit_match.group(1)
+                to_ref = explicit_match.group(2)
                 from_pos = get_coords_for_grid_ref(from_ref)
                 to_pos = get_coords_for_grid_ref(to_ref)
                 piece = self.game.get_piece_at(from_pos)
@@ -734,31 +765,34 @@ class HumanPlayer(Player):
                 print "That's not a valid move. Examples: 'A8', 'D2D4', etc."
                 continue
             pos = get_coords_for_grid_ref(move_string)
-            piece_on_target = game.get_piece_at(pos)
+            piece_on_target = self.game.get_piece_at(pos)
             
             # If it's not one of ours, see if any of our pieces can move there
             if not piece_on_target or not piece_on_target.color == self.color:
-                valid_moves = game.get_valid_moves(self.color)
-                if not valid_moves:
-                    print "No piece can move there."
+                valid_moves = self.game.get_valid_moves(self.color)
+                moves_to_target = [move for move in valid_moves if
+                                   move[1] == pos]
+                if not moves_to_target:
+                    action_string = "move there"
+                    if piece_on_target:
+                        action_string = ("take that %s" %
+                                         PIECE_NAMES[piece_on_target.__class__])
+                    print "None of your pieces can %s." % action_string
                     continue
-                elif len(valid_moves) == 2:
-                    piece_one = valid_moves[0][0]
-                    piece_two = valid_moves[1][0]
+                elif len(moves_to_target) == 2:
+                    piece_one = moves_to_target[0][0]
+                    piece_two = moves_to_target[1][0]
                     if piece_one.__class__ == piece_two.__class__:
-                        name = PIECE_NAMES[piece_one.__class__]
-                        print "Two %ss can move there." % name
+                        print "Two %ss can move there." % piece_one.name
                     else:
-                        name_one = PIECE_NAMES[piece_one.__class__]
-                        name_two = PIECE_NAMES[piece_two.__class__]
                         print ("The %s and the %s can both move there." %
-                               (name_one, name_two)
+                               (piece_one.name, piece_two.name))
                     continue
-                elif len(valid_moves) > 1:
+                elif len(moves_to_target) > 1:
                     print "Lots of pieces can move there."
                     continue
-                elif len(valid_moves) == 1:
-                    return valid_moves[0]
+                elif len(moves_to_target) == 1:
+                    return moves_to_target[0]
                 else:
                     raise RuntimeError("Never reached.")
             
@@ -777,12 +811,12 @@ class HumanPlayer(Player):
                 continue
             coords = get_coords_for_grid_ref(input_string)
             valid_squares = [move[1] for move in valid_moves]
+            if coords == piece.pos:
+                print "That %s is already on %s!" % (piece.name, input_string)
             if not coords in valid_squares:
                 print "That %s can't move to %s" % (piece.name, input_string)
                 continue
-            move = (piece, coords)
-            break
-        return move
+            return (piece, coords)
 
 if __name__ == "__main__":
     try:
