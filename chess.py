@@ -32,7 +32,7 @@ WHITE = True
 BLACK = False
 
 # Human-readable colour names
-COLOR_NAMES = {WHITE: "white", BLACK: "black"}
+COLOR_NAMES = {WHITE: "white", BLACK: "red"}
 
 # Square colours
 DARK = "DARK"
@@ -439,7 +439,6 @@ class Game(object):
                     raise RuntimeError("Messed up en passant.")
                 if not taken_pawn:
                     raise RuntimeError("Messed up en passant again.")
-                print "Removing %s" % taken_pawn
                 self._pieces.remove(taken_pawn)
         
         # Castling
@@ -466,10 +465,7 @@ class Game(object):
         # Update game state for castling etc.
         piece.has_moved = True
         self.last_moved_piece = piece
-        
-        
-        
-        
+                
         # Alter idle move count - reset if it's a take or a pawn move
         if piece.__class__ == Pawn or previous_piece:
             self.idle_move_count = 0
@@ -496,7 +492,7 @@ class Game(object):
         """If the current player's King is under threat.
         
         """
-        if not color:
+        if color is None:
             color = self.color_to_move
         
         # All the moves the opposing player could make
@@ -729,7 +725,6 @@ class HumanPlayer(Player):
                 check_string = " (You're in check!)"
             else:
                 check_string = ""
-            print self.game.en_passant_pos
             print "%s to play.%s" % (COLOR_NAMES[self.color].title(),
                                      check_string)
             
