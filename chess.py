@@ -437,7 +437,7 @@ class Game(object):
             # En passant
             if piece.pos == self.en_passant_pos:
                 if piece.pos[1] == 2:
-                    taken_pawn = self.get_piece_at((piece.pos[0], 2))
+                    taken_pawn = self.get_piece_at((piece.pos[0], 3))
                 elif piece.pos[1] == 5:
                     taken_pawn = self.get_piece_at((piece.pos[0], 4))
                 else:
@@ -719,6 +719,24 @@ class ComputerPlayer(Player):
         taking_moves = [move for move in available_moves if
                         self.game.get_piece_at(move[1])]
         
+        # Retreats
+        retreats = {}
+        for move in available_moves:
+            if self.game.is_piece_at_risk(move[0]):
+                test_game = copy.deepcopy(self.game)
+                test_game.move_piece_to(move[0], move[1])
+                if test_game.is_piece_at_risk(test_game.get_piece_at(move[1])):
+                    continue
+                retreats[move] = move[0].value
+        highest_value = -999999
+        best_retreat = None
+        for move, value in retreats.items():
+            if value > highest_value:
+                best_retreat = move
+                highest_value = value
+        if best_retreat:
+            return best_retreat
+        
         # Find riskless taking moves (free material)
         riskless_taking_moves = []
         for move in taking_moves:
@@ -739,7 +757,7 @@ class ComputerPlayer(Player):
             our_piece = move[0]
             their_piece = self.game.get_piece_at(move[1])
             move_value = their_piece.value - our_piece.value
-            valued_taking_moves[move] = our_piece.value
+            valued_taking_moves[move] = move_value
         highest_value = -999999
         best_taking_move = None
         for move, value in valued_taking_moves.items():
