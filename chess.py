@@ -19,6 +19,7 @@ class; just a list of pieces each one keeping track of its own position.
 
 """
 import re
+import sys
 import time
 import copy
 import random
@@ -63,6 +64,7 @@ class Piece(object):
         self.color = color
         self.pos = pos
         self.name = PIECE_NAMES[self.__class__]
+        self.has_moved = False
     
     def __str__(self):
         color_string = COLOR_NAMES[self.color]
@@ -147,7 +149,7 @@ class Piece(object):
         return valid_moves    
 
 class Pawn(Piece):
-    def get_valid_moves(self, game):
+    def get_valid_moves(self, game, testing_check=False):
         moves = []
         
         # Get all the possible squares it can move to
@@ -187,7 +189,7 @@ class Pawn(Piece):
         return moves
 
 class Knight(Piece):
-    def get_valid_moves(self, game):
+    def get_valid_moves(self, game, testing_check=False):
         moves = []
         
         # [ ][7][ ][0][ ]
@@ -206,7 +208,7 @@ class Knight(Piece):
         
 
 class King(Piece):
-    def get_valid_moves(self, game):
+    def get_valid_moves(self, game, testing_check=False):
         moves = []
         # Clockwise, starting with one square up
         offsets = [UP, UP_RIGHT, RIGHT, DOWN_RIGHT,
@@ -214,7 +216,56 @@ class King(Piece):
         for offset in offsets:
             moves.append((self.pos[0] + offset[0], self.pos[1] + offset[1]))
         
-        # TODO: Castling
+        # Castling - just handle the King move; the rook move will be done
+        # by the game.
+        y_pos = self.pos[1]
+        queen_rook = game.get_piece_at((0, y_pos))
+        king_rook = game.get_piece_at((7, y_pos))
+        for rook in queen_rook, king_rook:
+            # Don't worry about castling when testing check.
+            if testing_check:
+                continue
+            
+            if not rook:
+                continue
+            
+            # Can't castle out of check
+            if game.in_check(self.color):
+                continue
+            
+            # Neither the rook nor the king can have moved
+            if self.has_moved or rook.has_moved:
+                continue
+            
+            # Squares between the king and rook must be vacant
+            squares_between = []
+            if rook.pos[0] < self.pos[0]:  # Queen side
+                squares_between = [(1, y_pos), (2, y_pos), (3, y_pos)]
+            else:  # King side
+                squares_between = [(5, y_pos), (6, y_pos)]
+            all_squares_vacant = True
+            for square in squares_between:
+                if game.get_piece_at(square):
+                    all_squares_vacant = False
+            if not all_squares_vacant:
+                continue
+            
+            # None of the squares in between can put the King in check
+            crosses_check = False
+            for square in squares_between:
+                test_game = copy.deepcopy(game)
+                test_game.move_piece_to(self, square)
+                if test_game.in_check(self.color):
+                    crosses_check = True
+                    break
+            if crosses_check:
+                continue
+            
+            # Castling on this side is allowed
+            if rook == queen_rook:
+                moves.append((2, self.pos[1]))
+            else:
+                moves.append((6, self.pos[1]))
         
         # Remove obviously invalid moves
         moves = self.remove_invalid_moves(game, moves)
@@ -222,7 +273,7 @@ class King(Piece):
 
 
 class Queen(Piece):
-    def get_valid_moves(self, game):
+    def get_valid_moves(self, game, testing_check=False):
         moves = []
         
         # All directions are valid
@@ -239,7 +290,7 @@ class Queen(Piece):
 
 
 class Bishop(Piece):
-    def get_valid_moves(self, game):
+    def get_valid_moves(self, game, testing_check=False):
         moves = []
         
         # Diagonals only
@@ -255,7 +306,7 @@ class Bishop(Piece):
 
 
 class Rook(Piece):
-    def get_valid_moves(self, game):
+    def get_valid_moves(self, game, testing_check=False):
         moves = []
         
         # Horizontal and vertical only
@@ -271,18 +322,18 @@ class Rook(Piece):
 
 
 # Characters to represent pieces
-PIECE_CHARACTERS = {King: "♚",
-                    Queen: "♛",
-                    Rook: "♜",
-                    Bishop: "♝",
-                    Knight: "♞",
-                    Pawn: "♟"}
-SELECTED_PIECE_CHARACTERS = {King: "♔",
-                             Queen: "♕",
-                             Rook: "♖",
-                             Bishop: "♗",
-                             Knight: "♘",
-                             Pawn: "♙"}
+SELECTED_PIECE_CHARACTERS = {King: "♚",
+                             Queen: "♛",
+                             Rook: "♜",
+                             Bishop: "♝",
+                             Knight: "♞",
+                             Pawn: "♟"}
+PIECE_CHARACTERS = {King: "♔",
+                    Queen: "♕",
+                    Rook: "♖",
+                    Bishop: "♗",
+                    Knight: "♘",
+                    Pawn: "♙"}
 
 # Human readable piece names
 PIECE_NAMES = {King: "king",
@@ -313,6 +364,8 @@ class Game(object):
         for x in range(8):
             self._pieces.append(Pawn(WHITE, (x,1)))
             self._pieces.append(Pawn(BLACK, (x,6)))
+        
+        self.last_moved_piece = None
         
         # Other pieces
         officer_ranks = {WHITE: 0, BLACK: 7}
@@ -361,7 +414,10 @@ class Game(object):
             self._pieces.remove(previous_piece)
         
         # Move the piece
+        old_pos = piece.pos
         piece.pos = pos
+        piece.has_moved = True
+        self.last_moved_piece = piece
         
         # Handle special cases. Promotion:
         if piece.__class__ == Pawn:
@@ -370,7 +426,19 @@ class Game(object):
                 piece.color == BLACK and piece.pos[1] == 0):
                 self._pieces.remove(piece)
                 self._pieces.append(Queen(piece.color, piece.pos))
-        # TODO: en passant, castling
+        
+        # Castling
+        if piece.__class__ == King:
+            if old_pos[0] - pos[0] == 2:  # Queen side castling
+                queen_rook = self.get_piece_at((0, pos[1]))
+                queen_rook.pos = (3, pos[1])
+                queen_rook.has_moved = True
+            if old_pos[0] - pos[0] == -2:  # King side castling
+                king_rook = self.get_piece_at((7, pos[1]))
+                king_rook.pos = (5, pos[1])
+                king_rook.has_moved = True
+        
+        # TODO: en passant
         
         # Alter idle move count - reset if it's a take or a pawn move
         if piece.__class__ == Pawn or previous_piece:
@@ -407,7 +475,7 @@ class Game(object):
         # See if any of the other player's moves could take the king
         our_king = [piece for piece in self._pieces if
                     piece.__class__ == King and piece.color == color][0]
-        their_moves = self.get_valid_moves(their_color, ignore_check=True)
+        their_moves = self.get_valid_moves(their_color, testing_check=True)
         for move in their_moves:
             if self.get_piece_at(move[1]) == our_king:
                 # They have a move that could potentially take the King
@@ -425,11 +493,35 @@ class Game(object):
             return self._pieces
         return [piece for piece in self._pieces if piece.color == color]
     
-    def get_valid_moves(self, color, ignore_check=False):
+    def get_valid_moves_for_piece(self, piece, testing_check=False):
+        """Get the moves the given piece can legally make.
+        
+        """
+        moves = []
+        
+        # Get every possible move
+        for pos in piece.get_valid_moves(self, testing_check=testing_check):
+            moves.append((piece, pos))
+        
+        # If we're not worried about putting ourself in check, we're done.
+        if testing_check:
+            return moves
+        
+        # Filter out moves that would put the King in check
+        would_check = []
+        for move in moves:
+            test_game = copy.deepcopy(self)
+            test_game.move_piece_to(move[0], move[1])
+            if test_game.in_check(piece.color):
+                would_check.append(move)
+        
+        return [move for move in moves if not move in would_check]
+    
+    def get_valid_moves(self, color, testing_check=False):
         """All possible moves for the given color.
         
         Returns a list of tuples, piece then move. Includes taking the King,
-        so check should be handled separately. Pass ignore_check to allow moves
+        so check should be handled separately. Pass testing_check to allow moves
         that would put the King at risk.
         
         """
@@ -437,35 +529,9 @@ class Game(object):
         
         # Get every possible move
         for piece in self.get_pieces(color):
-            for pos in piece.get_valid_moves(self):
-                moves.append((piece, pos))
-        
-        # If we're not worried about putting ourself in check, we're done.
-        if ignore_check:
-            return moves
-        
-        # Filter out moves that would put the King in check
-        would_check = []
-        for move in moves:
-            test_game = copy.deepcopy(self)
-            test_game.move_piece_to(piece, move[1])
-            if test_game.in_check(color):
-                would_check.append(move)
-            # # Move the piece, test for check, then move it back
-            # piece, pos = move
-            # old_pos = piece.pos
-            # old_piece = self.get_piece_at(pos)
-            # if old_piece:
-            #     self._pieces.remove(old_piece)
-            # piece.pos = pos
-            # if self.in_check(color):
-            #     would_check.append(move)
-            # # Put them back
-            # piece.pos = old_pos
-            # if old_piece:
-            #     self._pieces.append(old_piece)
-        
-        return [move for move in moves if not move in would_check]
+            moves.extend(self.get_valid_moves_for_piece(piece,
+                                                testing_check=testing_check))
+        return moves
 
 def get_coords_for_grid_ref(grid_ref):
     """Convert traditional coordinates to our coordinates.
@@ -499,9 +565,10 @@ def draw_game(game, selected_piece=None):
     
     # Get possible moves for selected piece
     if selected_piece:
-        valid_moves = selected_piece.get_valid_moves(game)
+        valid_moves = game.get_valid_moves_for_piece(selected_piece)
+        valid_squares = [move[1] for move in valid_moves]
     else:
-        valid_moves = []
+        valid_squares = []
     
     # Ranks, top to bottom:
     for y in reversed(range(8)):
@@ -510,7 +577,7 @@ def draw_game(game, selected_piece=None):
             # Get foreground text (must make up two characters)
             piece = game.get_piece_at((x, y))
             if piece:
-                if piece == selected_piece:
+                if piece == selected_piece or piece == game.last_moved_piece:
                     piece_char = SELECTED_PIECE_CHARACTERS[piece.__class__]
                 else:
                     piece_char = PIECE_CHARACTERS[piece.__class__]
@@ -519,7 +586,7 @@ def draw_game(game, selected_piece=None):
                 foreground_text = "  "
             
             # Get background colour
-            if (x, y) in valid_moves:
+            if (x, y) in valid_squares:
                 square_color = HIGHLIGHTED
             elif x % 2 == y % 2:
                 square_color = DARK
@@ -540,9 +607,36 @@ def draw_game(game, selected_piece=None):
 def main():
     game = Game()
     
-    players = {BLACK: ComputerPlayer(game, BLACK),
-               WHITE: ComputerPlayer(game, WHITE)}
+    # Get the game type
+    print "Let's play chess! Select a game type:"
+    print
+    print "1. Computer vs. computer"
+    print "2. Computer vs. human"
+    print "3. Human vs. computer"
+    print "4. Human vs. human"
+    print
+    while True:
+        option = raw_input("Selection: ").strip()
+        if not option in ["1", "2", "3", "4"]:
+            print "Select an option above (1-4)"
+            continue
+        if option == "1":
+            players = {WHITE: ComputerPlayer(game, WHITE),
+                       BLACK: ComputerPlayer(game, BLACK)}
+        elif option == "2":
+            players = {WHITE: ComputerPlayer(game, WHITE),
+                       BLACK: HumanPlayer(game, BLACK)}
+        elif option == "3":
+            players = {WHITE: HumanPlayer(game, WHITE),
+                       BLACK: ComputerPlayer(game, BLACK)}
+        elif option == "4":
+            players = {WHITE: HumanPlayer(game, WHITE),
+                       BLACK: HumanPlayer(game, BLACK)}
+        else:
+            raise RuntimeError("Never reached.")
+        break
     
+    # Main game loop
     try:
         while True:
             # time.sleep(0.01)
@@ -554,9 +648,9 @@ def main():
             game.color_to_move = not game.color_to_move
             game.check_endgame()
             
-    except EndGame:
+    except EndGame as e:
         draw_game(game)
-        raise
+        print e
     
 
 class Player(object):
@@ -570,13 +664,15 @@ class ComputerPlayer(Player):
             raise RuntimeError("Not my turn!")
         
         available_moves = self.game.get_valid_moves(self.color)
+        
+        # Find taking moves
         taking_moves = [move for move in available_moves if
                         self.game.get_piece_at(move[1])]
         
         # Find checking moves
         checking_moves = []
         for move in available_moves:
-            test_game = copy.deepcopy(game)
+            test_game = copy.deepcopy(self.game)
             test_game.move_piece_to(move[0], move[1])
             if test_game.in_check(not self.color):
                 checking_moves.append(move)
@@ -596,6 +692,15 @@ class HumanPlayer(Player):
         
         """
         while True:
+            draw_game(self.game)
+            # Print status
+            if self.game.in_check(self.color):
+                check_string = " (You're in check!)"
+            else:
+                check_string = ""
+            print "%s to play.%s" % (COLOR_NAMES[self.color].title(),
+                                     check_string)
+
             # Select a piece
             piece = None
             input_string = raw_input("Move piece at: ").strip().upper()
@@ -610,7 +715,8 @@ class HumanPlayer(Player):
             if not piece.color == self.color:
                 print "That's not your %s!" % piece.name
                 continue
-            if not piece.get_valid_moves(self.game):
+            valid_moves = self.game.get_valid_moves_for_piece(piece)
+            if not valid_moves:
                 print "That %s has nowhere to go!" % piece.name
                 continue
             
@@ -621,7 +727,8 @@ class HumanPlayer(Player):
                 print "That's not a square!"
                 continue
             coords = get_coords_for_grid_ref(input_string)
-            if not coords in piece.get_valid_moves(self.game):
+            valid_squares = [move[1] for move in valid_moves]
+            if not coords in valid_squares:
                 print "That %s can't move to %s" % (piece.name, input_string)
                 continue
             move = (piece, coords)
@@ -629,4 +736,8 @@ class HumanPlayer(Player):
         return move
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print "\nBye!"
+        sys.exit()
