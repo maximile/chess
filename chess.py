@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+# test push
 """
 Chess! Squares are identified by tuples of ints, 0-7. Y axis is up from white's
 point of view:
