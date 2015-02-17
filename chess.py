@@ -372,9 +372,21 @@ PIECE_VALUES = {King: 9999,
 
 
 class EndGame(Exception):
+    """Raised when the game ends. Message is human-readable and presented
+    to the player.
+    
+    """
     pass
 
+
 class Game(object):
+    """Class representing the game state.
+    
+    Board layout is stored as a list of pieces - each piece knows its own
+    position. Other state information (who's turn etc.) is stored in
+    instance variables.
+    
+    """
     def __init__(self):
         """Set up initial state.
         
@@ -389,12 +401,8 @@ class Game(object):
         
         # Setup initial position. First, setup pawns:
         for x in range(8):
-            self._pieces.append(Pawn(WHITE, (x,1)))
-            self._pieces.append(Pawn(BLACK, (x,6)))
-        
-        # Various state
-        self.last_moved_piece = None
-        self.en_passant_pos = None
+            self._pieces.append(Pawn(WHITE, (x, 1)))
+            self._pieces.append(Pawn(BLACK, (x, 6)))
         
         # Other pieces
         officer_ranks = {WHITE: 0, BLACK: 7}
@@ -407,6 +415,10 @@ class Game(object):
             self._pieces.append(Bishop(color, (5, rank)))
             self._pieces.append(Knight(color, (6, rank)))
             self._pieces.append(Rook(color, (7, rank)))
+        
+        # Various state
+        self.last_moved_piece = None
+        self.en_passant_pos = None
     
     def get_piece_at(self, pos):
         """The piece at the given position.
@@ -418,11 +430,13 @@ class Game(object):
     
     def move_piece_to(self, piece, pos):
         """Update the piece's position, removing any existing piece.
+        
+        All piece moves should be made with this method, otherwise the game
+        state won't be updated properly.
                 
         """
-        # Don't need to worry about accidentally moving pieces from other games
+        # Make sure we're not dealing with a piece from another game:
         piece = self.get_piece_at(piece.pos)
-                
         previous_piece = self.get_piece_at(pos)
         
         # Check for taking
@@ -474,7 +488,7 @@ class Game(object):
                 king_rook.has_moved = True
         
         # Update en passant status
-        if (piece.__class__ == Pawn and piece.pos[1] in [3,4] and
+        if (piece.__class__ == Pawn and piece.pos[1] in [3, 4] and
             not piece.has_moved):
             if piece.pos[1] == 3:
                 self.en_passant_pos = ((piece.pos[0], 2))
@@ -510,7 +524,7 @@ class Game(object):
             raise EndGame("Draw (fifty idle moves)")
     
     def is_piece_at_risk(self, piece):
-        """If the piece can be taken.
+        """True if the piece can be taken, otherwise False.
         
         """
         their_moves = self.get_valid_moves(not piece.color, testing_check=True)
@@ -585,6 +599,7 @@ class Game(object):
                                                 testing_check=testing_check))
         return moves
 
+
 def get_coords_for_grid_ref(grid_ref):
     """Convert traditional coordinates to our coordinates.
 
@@ -592,7 +607,7 @@ def get_coords_for_grid_ref(grid_ref):
          H8 -> (7, 7)
 
     """
-    x_for_file = {"A": 0,"B": 1, "C": 2, "D": 3, "E": 4, "F": 5, "G": 6,
+    x_for_file = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4, "F": 5, "G": 6,
                   "H": 7}
     y_for_rank = {"1": 0, "2": 1, "3": 2, "4": 3, "5": 4, "6": 5, "7": 6,
                   "8": 7}
@@ -612,6 +627,12 @@ def get_grid_ref_for_pos(coords):
     return (files[coords[0]] + ranks[coords[1]])
 
 def draw_game(game, selected_piece=None):
+    """Print a string that represents the current game state.
+    
+    Uses ANSI color codes to make it readable - game isn't playable without
+    color support in the terminal.
+    
+    """
     # Get a string for each rank
     rank_strings = []
     
@@ -705,12 +726,33 @@ def main():
         print e
     
 
-class Player(object):
+class AbstractPlayer(object):
+    """Abstract superclass representing a player who can make moves at
+    the chess game.
+    
+    get_move must be subclassed; player objects will have this method called
+    repeatedly until the game is over.
+    
+    """
     def __init__(self, game, color):
         self.game = game
         self.color = color
     
-class ComputerPlayer(Player):
+    def get_move(self):
+        """Return the move that the player wants to make based on the
+        current game state.
+        
+        """
+        raise NotImplementedError()
+
+
+class ComputerPlayer(AbstractPlayer):
+    """AI-controlled player.
+    
+    Considers checkmate, checks, captures, retreats and pawn advances.
+    No forward-planning though, so it's extremely basic and easy to beat.
+    
+    """
     def get_move(self):
         if not self.game.color_to_move == self.color:
             raise RuntimeError("Not my turn!")
@@ -799,7 +841,12 @@ class ComputerPlayer(Player):
         # Make any move
         return random.choice(available_moves)
 
-class HumanPlayer(Player):
+class HumanPlayer(AbstractPlayer):
+    """Represents a human player.
+    
+    Parses command-line input to get the move.
+    
+    """
     def get_move(self):
         """Get command line input to move the piece.
         
