@@ -15,17 +15,16 @@ point of view:
    0  1  2  3  4  5  6  7
    
 The squared marked * would be identified by tuple (4, 2). There's no board
-class; just a list of pieces each one keeping track of its own position.
+class; just a list of pieces - each piece keeps track of its own position.
 
 """
 import re
 import sys
-import time
 import copy
 import random
 
 # Regular expression for a valid grid reference (only used for input)
-GRID_REF = re.compile(r"[A-H][1-8]")
+GRID_REF = re.compile(r"^[A-H][1-8]$")
 
 # Piece colours
 WHITE = True
@@ -54,17 +53,22 @@ ANSI_BEGIN = "\033[%sm"
 ANSI_END = "\033[0m"
 ANSI_BG = {DARK: "40", LIGHT: "44", HIGHLIGHTED: "42"}
 ANSI_FG = {WHITE: "37", BLACK: "31"}
-# ANSI_BG = {DARK: "43", LIGHT: "47"}
-# ANSI_FG = {WHITE: "31", BLACK: "30"}
 
-class Piece(object):
+
+class AbstractPiece(object):
+    """Abstract superclass defining a chess piece.
+    
+    Pieces keep track of their own attributes and board position. Subclasses
+    must implement get_valid_moves.
+    
+    """
     def __init__(self, color, pos):
         if not color in (WHITE, BLACK):
             raise ValueError("Invalid color")
         self.color = color
         self.pos = pos
         self.name = PIECE_NAMES[self.__class__]
-        self.value= PIECE_VALUES[self.__class__]
+        self.value = PIECE_VALUES[self.__class__]
         self.has_moved = False
     
     def __str__(self):
@@ -75,6 +79,16 @@ class Piece(object):
     
     def __repr__(self):
         return self.__str__()
+    
+    def get_valid_moves(self, game, testing_check=False):
+        """A list of moves that can legally be made in the given game.
+        
+        Returns a list of positions, e.g. [(1, 2), (3, 4), ...]. Pass 
+        'testing_check=True' to omit moves that can't be used to get out
+        of check (castling).
+        
+        """
+        raise NotImplementedError()
     
     def get_moves_in_direction(self, game, direction):
         """Find all moves along a given direction.
@@ -149,7 +163,8 @@ class Piece(object):
         
         return valid_moves    
 
-class Pawn(Piece):
+
+class Pawn(AbstractPiece):
     def get_valid_moves(self, game, testing_check=False):
         moves = []
         
@@ -191,7 +206,8 @@ class Pawn(Piece):
         
         return moves
 
-class Knight(Piece):
+
+class Knight(AbstractPiece):
     def get_valid_moves(self, game, testing_check=False):
         moves = []
         
@@ -210,7 +226,7 @@ class Knight(Piece):
         return moves
         
 
-class King(Piece):
+class King(AbstractPiece):
     def get_valid_moves(self, game, testing_check=False):
         moves = []
         # Clockwise, starting with one square up
@@ -275,7 +291,7 @@ class King(Piece):
         return moves
 
 
-class Queen(Piece):
+class Queen(AbstractPiece):
     def get_valid_moves(self, game, testing_check=False):
         moves = []
         
@@ -292,7 +308,7 @@ class Queen(Piece):
         return moves
 
 
-class Bishop(Piece):
+class Bishop(AbstractPiece):
     def get_valid_moves(self, game, testing_check=False):
         moves = []
         
@@ -308,7 +324,7 @@ class Bishop(Piece):
         return moves
 
 
-class Rook(Piece):
+class Rook(AbstractPiece):
     def get_valid_moves(self, game, testing_check=False):
         moves = []
         
